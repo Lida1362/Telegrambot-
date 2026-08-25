@@ -1,5 +1,7 @@
 const BOT_TOKEN = "8691367292:AAG8sKYt1PnnWDLL7PRXfKVWBhze2yzWhyQ";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const YOUTUBE_API_KEY = "AIzaSyD0NeNjoBIAqcTzxTsYiAeA9DpkG9ct3zQ";
+const YOUTUBE_API = `https://www.googleapis.com/youtube/v3/search?key=${YOUTUBE_API_KEY}`;
 
 const ARTIST_LIST = [
   "گوگوش",
@@ -86,6 +88,57 @@ async function searchiTunes(query) {
   }
 }
 
+async function searchYouTube(query) {
+  try {
+    const url = `${YOUTUBE_API}&part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=10`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.error) {
+      console.error("YouTube API error:", data.error);
+      return [];
+    }
+
+    const videoIds = (data.items || [])
+      .filter((item) => item.id && item.id.kind === "youtube#video")
+      .map((item) => item.id.videoId)
+      .join(",");
+
+    if (!videoIds) {
+      return [];
+    }
+
+    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?key=${YOUTUBE_API_KEY}&part=contentDetails,statistics&id=${videoIds}`;
+    const detailsResponse = await fetch(detailsUrl);
+    const detailsData = await detailsResponse.json();
+
+    const durationMap = {};
+    for (const item of detailsData.items || []) {
+      const iso = item.contentDetails?.duration || "";
+      const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      const hours = parseInt(match?.[1] || "0");
+      const minutes = parseInt(match?.[2] || "0");
+      const seconds = parseInt(match?.[3] || "0");
+      durationMap[item.id] = hours * 3600 + minutes * 60 + seconds;
+    }
+
+    return (data.items || []).map((item) => {
+      const videoId = item.id?.videoId || "";
+      return {
+        title: item.snippet?.title || "",
+        source: "youtube",
+        url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
+        link: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
+        duration: durationMap[videoId] || 0,
+        author: item.snippet?.channelTitle || "YouTube",
+      };
+    });
+  } catch (e) {
+    console.error("YouTube search error:", e);
+    return [];
+  }
+}
+
 async function searchiTunes(query) {
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
@@ -124,6 +177,10 @@ function scoreResult(song, query) {
     score += 5;
   }
 
+  if (song.source === "youtube") {
+    score += 12;
+  }
+
   if (song.preview || song.downloadUrl || song.vlink || song.uri || song.url) {
     score += 10;
   }
@@ -136,6 +193,7 @@ async function searchAllSources(query) {
 
   const results = await Promise.allSettled([
     searchJioSaavn(query),
+    searchYouTube(query),
     searchDeezer(query),
     searchiTunes(query),
   ]);
@@ -214,7 +272,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, Deezer, iTunes\n\n/artists - نمایش لیست خوانندگان"
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\n/youtube [نام آهنگ] - جستجو در YouTube\n\nمنابع جستجو: JioSaavn, YouTube, Deezer, iTunes\n\n/artists - نمایش لیست خوانندگان"
     );
     return;
   }
@@ -224,6 +282,30 @@ async function handleUpdate(update) {
       chatId,
       "🎤 لیست خوانندگان:\n\n" + ARTIST_LIST.join("\n")
     );
+    return;
+  }
+
+  if (text.startsWith("/youtube ")) {
+    const query = text.replace("/youtube ", "").trim();
+    if (!query) {
+      await sendMessage(chatId, "لطفا عبارت جستجو را بعد از /youtube وارد کنید.\nمثال: /youtube moein zendegi ba tou");
+      return;
+    }
+
+    await sendChatAction(chatId, "typing");
+    const results = await searchYouTube(query);
+
+    if (results.length === 0) {
+      await sendMessage(chatId, "❌ ویدیویی در YouTube یافت نشد.");
+      return;
+    }
+
+    for (const video of results.slice(0, 5)) {
+      await sendMessage(
+        chatId,
+        `🎬 ${video.title || "بدون عنوان"}\n👤 ${video.author || "YouTube"}\n⏱️ ${video.duration ? Math.floor(video.duration / 60) + ":" + String(video.duration % 60).padStart(2, "0") : ""}\n🔗 ${video.link || video.url || ""}`
+      );
+    }
     return;
   }
 
@@ -253,6 +335,12 @@ async function handleUpdate(update) {
       performer = song.primary_artists || song.singers || "Unknown";
       duration = parseInt(song.duration) || 0;
       link = song.perma_url || "";
+    } else if (song.source === "youtube") {
+      audioUrl = "";
+      title = song.title || "Unknown";
+      performer = song.author || "YouTube";
+      link = song.link || song.url || "";
+      duration = song.duration || 0;
     } else if (song.source === "deezer") {
       audioUrl = song.preview || "";
       title = song.title || "Unknown";
@@ -270,6 +358,15 @@ async function handleUpdate(update) {
     }
 
     if (!audioUrl && !link) {
+      continue;
+    }
+
+    if (song.source === "youtube" && link) {
+      await sendMessage(
+        chatId,
+        `🎬 ${title}\n👤 ${performer}\n⏱️ ${duration ? Math.floor(duration / 60) + ":" + String(duration % 60).padStart(2, "0") : ""}\n🔗 ${link}`
+      );
+      sentCount++;
       continue;
     }
 
