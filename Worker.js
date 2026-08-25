@@ -259,7 +259,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, YouTube, Deezer, iTunes"
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\n/youtube [نام آهنگ] - جستجو در YouTube\n\nمنابع جستجو: JioSaavn, YouTube, Deezer, iTunes"
     );
     return;
   }
@@ -269,6 +269,30 @@ async function handleUpdate(update) {
       chatId,
       "🎤 لیست خوانندگان:\n\n" + ARTIST_LIST.join("\n")
     );
+    return;
+  }
+
+  if (text.startsWith("/youtube ")) {
+    const query = text.replace("/youtube ", "").trim();
+    if (!query) {
+      await sendMessage(chatId, "لطفا عبارت جستجو را بعد از /youtube وارد کنید.\nمثال: /youtube moein zendegi ba tou");
+      return;
+    }
+
+    await sendChatAction(chatId, "typing");
+    const results = await searchYouTube(query);
+
+    if (results.length === 0) {
+      await sendMessage(chatId, "❌ ویدیویی در YouTube یافت نشد.");
+      return;
+    }
+
+    for (const video of results.slice(0, 5)) {
+      await sendMessage(
+        chatId,
+        `🎬 ${video.title || "بدون عنوان"}\n👤 ${video.author || "YouTube"}\n⏱️ ${video.duration ? Math.floor(video.duration / 60) + ":" + String(video.duration % 60).padStart(2, "0") : ""}\n🔗 ${video.link || video.url || ""}`
+      );
+    }
     return;
   }
 
