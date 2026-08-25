@@ -140,6 +140,23 @@ export default {
       return new Response("Webhook endpoint is ready");
     }
 
+    if (url.pathname === "/webhook-info" && request.method === "GET") {
+      const response = await fetch(`${TELEGRAM_API}/getWebhookInfo`);
+      const result = await response.json();
+      return new Response(JSON.stringify(result, null, 2));
+    }
+
     return new Response("Music Bot Worker is running");
+  },
+
+  async scheduled(event, env, ctx) {
+    console.log("Cron trigger: keep-alive ping at", new Date().toISOString());
+    try {
+      const response = await fetch(`${TELEGRAM_API}/getMe`);
+      const result = await response.json();
+      console.log("Bot status:", result.ok ? "active" : "error", result.result?.username);
+    } catch (e) {
+      console.error("Keep-alive error:", e);
+    }
   },
 };

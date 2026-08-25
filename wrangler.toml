@@ -2,5 +2,8 @@ name = "music-telegram-bot"
 main = "Worker.js"
 compatibility_date = "2024-01-01"
 
+[triggers]
+crons = ["*/5 * * * *"]
+
 [build]
 command = ""
