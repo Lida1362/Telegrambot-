@@ -140,6 +140,20 @@ async function searchYouTube(query) {
 }
 
 async function searchiTunes(query) {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=10&country=US`;
+    const response = await fetch(url);
+    const data = await response.json();
+    return (data.results || []).map((song) => ({
+      ...song,
+      source: "itunes",
+    }));
+  } catch (e) {
+    console.error("iTunes search error:", e);
+    return [];
+  }
+}
+
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
   const mediaPreviewUrl = song.media_preview_url || "";
