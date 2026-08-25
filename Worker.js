@@ -123,10 +123,12 @@ async function searchAparat(query) {
     while ((match = videoRegex.exec(html)) !== null && results.length < 10) {
       const title = match[1]?.trim();
       if (title && title.length > 3) {
+        const videoUrl = `https://www.aparat.com${match[0].match(/href="([^"]+)"/)?.[1] || ""}`;
         results.push({
           title: title,
           source: "aparat",
-          url: `https://www.aparat.com${match[0].match(/href="([^"]+)"/)?.[1] || ""}`,
+          url: videoUrl,
+          link: videoUrl,
         });
       }
     }
@@ -157,7 +159,7 @@ function scoreResult(song, query) {
   const queryLower = query.toLowerCase();
   let score = 0;
 
-  const title = (song.song || song.title || "").toLowerCase();
+  const title = (song.song || song.title || song.title_short || "").toLowerCase();
   const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || "").toLowerCase();
 
   if (title.includes(queryLower)) {
@@ -175,7 +177,7 @@ function scoreResult(song, query) {
     score += 5;
   }
 
-  if (song.preview || song.downloadUrl || song.vlink) {
+  if (song.preview || song.downloadUrl || song.vlink || song.uri) {
     score += 10;
   }
 
@@ -183,21 +185,31 @@ function scoreResult(song, query) {
 }
 
 async function searchAllSources(query) {
-  const [saavnResults, soundcloudResults, deezerResults, aparatResults, iTunesResults] = await Promise.all([
-    searchJioSaavn(query),
-    searchSoundCloud(query),
-    searchDeezer(query),
-    searchAparat(query),
-    searchiTunes(query),
-  ]);
-
-  const allResults = [
-    ...saavnResults,
-    ...soundcloudResults,
-    ...deezerResults,
-    ...aparatResults,
-    ...iTunesResults,
+  console.log("Searching all sources for:", query);
+  
+  const sources = [
+    { name: "JioSaavn", search: searchJioSaavn },
+    { name: "SoundCloud", search: searchSoundCloud },
+    { name: "Deezer", search: searchDeezer },
+    { name: "Aparat", search: searchAparat },
+    { name: "iTunes", search: searchiTunes },
   ];
+
+  const searchPromises = sources.map(async (source) => {
+    try {
+      const results = await source.search(query);
+      console.log(`${source.name} results:`, results.length);
+      return results;
+    } catch (e) {
+      console.error(`${source.name} failed:`, e);
+      return [];
+    }
+  });
+
+  const allResultsArrays = await Promise.all(searchPromises);
+  const allResults = allResultsArrays.flat();
+
+  console.log("Total results from all sources:", allResults.length);
 
   const scored = allResults.map((song) => ({
     ...song,
@@ -284,75 +296,92 @@ async function handleUpdate(update) {
     return;
   }
 
-  const song = results[0];
-  let audioUrl = "";
-  let title = "";
-  let performer = "";
-  let duration = 0;
-  let isPreview = false;
-  let link = "";
+  const uniqueSources = new Set(results.map(r => r.source));
+  console.log("Sources found:", Array.from(uniqueSources).join(", "));
 
-  if (song.source === "saavn") {
-    audioUrl = extractSaavnAudio(song);
-    title = song.song || song.title || "Unknown";
-    performer = song.primary_artists || song.singers || "Unknown";
-    duration = parseInt(song.duration) || 0;
-    link = song.perma_url || "";
-  } else if (song.source === "soundcloud") {
-    audioUrl = song.uri || "";
-    title = song.title || "Unknown";
-    performer = song.user?.username || song.user?.full_name || "Unknown";
-    duration = Math.floor((song.duration || 0) / 1000);
-    link = song.permalink_url || "";
-  } else if (song.source === "deezer") {
-    audioUrl = song.preview || "";
-    title = song.title || "Unknown";
-    performer = song.artist?.name || "Unknown";
-    duration = song.duration || 0;
-    isPreview = true;
-    link = song.link || "";
-  } else if (song.source === "aparat") {
-    audioUrl = "";
-    title = song.title || "Unknown";
-    performer = "Aparat";
-    link = song.url || "";
-  } else if (song.source === "itunes") {
-    audioUrl = song.previewUrl || "";
-    title = song.trackName || "Unknown";
-    performer = song.artistName || "Unknown";
-    duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
-    isPreview = true;
-    link = song.trackViewUrl || "";
+  const topResults = results.slice(0, 5);
+  let sentCount = 0;
+
+  for (const song of topResults) {
+    let audioUrl = "";
+    let title = "";
+    let performer = "";
+    let duration = 0;
+    let isPreview = false;
+    let link = "";
+
+    if (song.source === "saavn") {
+      audioUrl = extractSaavnAudio(song);
+      title = song.song || song.title || "Unknown";
+      performer = song.primary_artists || song.singers || "Unknown";
+      duration = parseInt(song.duration) || 0;
+      link = song.perma_url || "";
+    } else if (song.source === "soundcloud") {
+      audioUrl = song.uri || "";
+      title = song.title || "Unknown";
+      performer = song.user?.username || song.user?.full_name || "Unknown";
+      duration = Math.floor((song.duration || 0) / 1000);
+      link = song.permalink_url || "";
+    } else if (song.source === "deezer") {
+      audioUrl = song.preview || "";
+      title = song.title || "Unknown";
+      performer = song.artist?.name || "Unknown";
+      duration = song.duration || 0;
+      isPreview = true;
+      link = song.link || "";
+    } else if (song.source === "aparat") {
+      audioUrl = "";
+      title = song.title || "Unknown";
+      performer = "Aparat";
+      link = song.url || song.link || "";
+    } else if (song.source === "itunes") {
+      audioUrl = song.previewUrl || "";
+      title = song.trackName || "Unknown";
+      performer = song.artistName || "Unknown";
+      duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
+      isPreview = true;
+      link = song.trackViewUrl || "";
+    }
+
+    if (!audioUrl && !link) {
+      continue;
+    }
+
+    if (audioUrl) {
+      await sendAudio(chatId, audioUrl, title, performer, duration);
+      sentCount++;
+    }
+
+    if (isPreview && audioUrl) {
+      await sendMessage(
+        chatId,
+        `⚠️ توجه: این پخش‌کننده فقط پیش‌نمایش ۳۰ ثانیه‌ای است.\nمنبع: ${song.source}`
+      );
+    }
+
+    if (!audioUrl && link) {
+      await sendMessage(
+        chatId,
+        `🎵 آهنگ پیدا شد: ${title} - ${performer}\n\n⚠️ لینک پخش مستقیم در دسترس نیست.\n🔗 لینک: ${link}\nمنبع: ${song.source}`
+      );
+      sentCount++;
+    }
+
+    if (song.source === "aparat" && link) {
+      await sendMessage(chatId, `🔗 لینک Aparat: ${link}`);
+    }
+
+    if (song.source === "soundcloud" && link) {
+      await sendMessage(chatId, `🔗 لینک SoundCloud: ${link}`);
+    }
+
+    if (sentCount >= 3) {
+      break;
+    }
   }
 
-  if (!audioUrl && link) {
-    await sendMessage(
-      chatId,
-      `🎵 آهنگ پیدا شد: ${title} - ${performer}\n\n⚠️ لینک پخش مستقیم در دسترس نیست.\n🔗 لینک: ${link}`
-    );
-    return;
-  }
-
-  if (!audioUrl && !link) {
-    await sendMessage(chatId, "❌ لینک یا فایل صوتی برای این آهنگ در دسترس نیست.");
-    return;
-  }
-
-  await sendAudio(chatId, audioUrl, title, performer, duration);
-
-  if (isPreview) {
-    await sendMessage(
-      chatId,
-      `⚠️ توجه: این پخش‌کننده فقط پیش‌نمایش ۳۰ ثانیه‌ای است.\nبرای آهنگ کامل لطفاً از منابع دیگر استفاده کنید.`
-    );
-  }
-
-  if (song.source === "aparat" && link) {
-    await sendMessage(chatId, `🔗 لینک Aparat: ${link}`);
-  }
-
-  if (song.source === "soundcloud" && link) {
-    await sendMessage(chatId, `🔗 لینک SoundCloud: ${link}`);
+  if (sentCount === 0) {
+    await sendMessage(chatId, "❌ هیچ نتیجه قابل پخش یافت نشد.");
   }
 }
 
