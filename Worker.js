@@ -86,60 +86,6 @@ async function searchiTunes(query) {
   }
 }
 
-async function searchSoundCloud(query) {
-  try {
-    const url = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&limit=10&client_id=2t9loNQH90kzJcsFCODdigxfp325aq4z&app_version=1744210159`;
-    const response = await fetch(url);
-    const data = await response.json();
-    return (data.collection || []).map((song) => ({
-      ...song,
-      source: "soundcloud",
-    }));
-  } catch (e) {
-    console.error("SoundCloud search error:", e);
-    return [];
-  }
-}
-
-async function searchAparat(query) {
-  try {
-    const searchUrl = `https://www.aparat.com/search/${encodeURIComponent(query)}`;
-    const response = await fetch(searchUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-    });
-    
-    if (!response.ok) {
-      return [];
-    }
-
-    const html = await response.text();
-    const results = [];
-    
-    const videoRegex = /href="\/video\/[^"]+"[^>]*>([^<]*)<\/a>/g;
-    let match;
-    
-    while ((match = videoRegex.exec(html)) !== null && results.length < 10) {
-      const title = match[1]?.trim();
-      if (title && title.length > 3) {
-        const videoUrl = `https://www.aparat.com${match[0].match(/href="([^"]+)"/)?.[1] || ""}`;
-        results.push({
-          title: title,
-          source: "aparat",
-          url: videoUrl,
-          link: videoUrl,
-        });
-      }
-    }
-    
-    return results;
-  } catch (e) {
-    console.error("Aparat search error:", e);
-    return [];
-  }
-}
-
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
   const mediaPreviewUrl = song.media_preview_url || "";
@@ -187,27 +133,20 @@ function scoreResult(song, query) {
 async function searchAllSources(query) {
   console.log("Searching all sources for:", query);
   
-  const sources = [
-    { name: "JioSaavn", search: searchJioSaavn },
-    { name: "SoundCloud", search: searchSoundCloud },
-    { name: "Deezer", search: searchDeezer },
-    { name: "Aparat", search: searchAparat },
-    { name: "iTunes", search: searchiTunes },
-  ];
+  const results = await Promise.allSettled([
+    searchJioSaavn(query),
+    searchDeezer(query),
+    searchiTunes(query),
+  ]);
 
-  const searchPromises = sources.map(async (source) => {
-    try {
-      const results = await source.search(query);
-      console.log(`${source.name} results:`, results.length);
-      return results;
-    } catch (e) {
-      console.error(`${source.name} failed:`, e);
+  const allResults = results.flatMap((result, index) => {
+    if (result.status === "fulfilled") {
+      return result.value;
+    } else {
+      console.error(`Source ${index} failed:`, result.reason);
       return [];
     }
   });
-
-  const allResultsArrays = await Promise.all(searchPromises);
-  const allResults = allResultsArrays.flat();
 
   console.log("Total results from all sources:", allResults.length);
 
@@ -274,7 +213,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, SoundCloud, Deezer, Aparat, iTunes\n\nلیست خوانندگان:\n" + ARTIST_LIST.slice(0, 10).join("\n") + "\n..."
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, Deezer, iTunes"
     );
     return;
   }
@@ -296,10 +235,7 @@ async function handleUpdate(update) {
     return;
   }
 
-  const uniqueSources = new Set(results.map(r => r.source));
-  console.log("Sources found:", Array.from(uniqueSources).join(", "));
-
-  const topResults = results.slice(0, 5);
+  const topResults = results.slice(0, 3);
   let sentCount = 0;
 
   for (const song of topResults) {
@@ -316,12 +252,6 @@ async function handleUpdate(update) {
       performer = song.primary_artists || song.singers || "Unknown";
       duration = parseInt(song.duration) || 0;
       link = song.perma_url || "";
-    } else if (song.source === "soundcloud") {
-      audioUrl = song.uri || "";
-      title = song.title || "Unknown";
-      performer = song.user?.username || song.user?.full_name || "Unknown";
-      duration = Math.floor((song.duration || 0) / 1000);
-      link = song.permalink_url || "";
     } else if (song.source === "deezer") {
       audioUrl = song.preview || "";
       title = song.title || "Unknown";
@@ -329,11 +259,6 @@ async function handleUpdate(update) {
       duration = song.duration || 0;
       isPreview = true;
       link = song.link || "";
-    } else if (song.source === "aparat") {
-      audioUrl = "";
-      title = song.title || "Unknown";
-      performer = "Aparat";
-      link = song.url || song.link || "";
     } else if (song.source === "itunes") {
       audioUrl = song.previewUrl || "";
       title = song.trackName || "Unknown";
@@ -365,18 +290,6 @@ async function handleUpdate(update) {
         `🎵 آهنگ پیدا شد: ${title} - ${performer}\n\n⚠️ لینک پخش مستقیم در دسترس نیست.\n🔗 لینک: ${link}\nمنبع: ${song.source}`
       );
       sentCount++;
-    }
-
-    if (song.source === "aparat" && link) {
-      await sendMessage(chatId, `🔗 لینک Aparat: ${link}`);
-    }
-
-    if (song.source === "soundcloud" && link) {
-      await sendMessage(chatId, `🔗 لینک SoundCloud: ${link}`);
-    }
-
-    if (sentCount >= 3) {
-      break;
     }
   }
 
