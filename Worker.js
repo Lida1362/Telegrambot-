@@ -86,6 +86,47 @@ async function searchiTunes(query) {
   }
 }
 
+async function searchYouTube(query) {
+  try {
+    const instances = [
+      "https://vid.puffyan.us",
+      "https://inv.nadeko.net",
+      "https://invidious.lunar.icu",
+    ];
+
+    for (const instance of instances) {
+      try {
+        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          continue;
+        }
+
+        const data = await response.json();
+        const videos = (data || []).filter((item) => item.type === "video");
+        
+        return videos.slice(0, 10).map((video) => ({
+          title: video.title || "",
+          source: "youtube",
+          url: video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : video.url || "",
+          link: video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : video.url || "",
+          duration: video.lengthSeconds || 0,
+          author: video.author || "",
+        }));
+      } catch (e) {
+        console.error(`YouTube instance ${instance} failed:`, e);
+        continue;
+      }
+    }
+
+    return [];
+  } catch (e) {
+    console.error("YouTube search error:", e);
+    return [];
+  }
+}
+
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
   const mediaPreviewUrl = song.media_preview_url || "";
@@ -105,8 +146,8 @@ function scoreResult(song, query) {
   const queryLower = query.toLowerCase();
   let score = 0;
 
-  const title = (song.song || song.title || song.title_short || "").toLowerCase();
-  const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || "").toLowerCase();
+  const title = (song.song || song.title || song.title_short || song.title || "").toLowerCase();
+  const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || song.author || "").toLowerCase();
 
   if (title.includes(queryLower)) {
     score += 10;
@@ -123,7 +164,11 @@ function scoreResult(song, query) {
     score += 5;
   }
 
-  if (song.preview || song.downloadUrl || song.vlink || song.uri) {
+  if (song.source === "youtube") {
+    score += 12;
+  }
+
+  if (song.preview || song.downloadUrl || song.vlink || song.uri || song.url) {
     score += 10;
   }
 
@@ -136,6 +181,7 @@ async function searchAllSources(query) {
   const results = await Promise.allSettled([
     searchJioSaavn(query),
     searchDeezer(query),
+    searchYouTube(query),
     searchiTunes(query),
   ]);
 
@@ -213,7 +259,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, Deezer, iTunes"
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, YouTube, Deezer, iTunes"
     );
     return;
   }
@@ -235,7 +281,7 @@ async function handleUpdate(update) {
     return;
   }
 
-  const topResults = results.slice(0, 3);
+  const topResults = results.slice(0, 5);
   let sentCount = 0;
 
   for (const song of topResults) {
@@ -252,6 +298,12 @@ async function handleUpdate(update) {
       performer = song.primary_artists || song.singers || "Unknown";
       duration = parseInt(song.duration) || 0;
       link = song.perma_url || "";
+    } else if (song.source === "youtube") {
+      audioUrl = "";
+      title = song.title || "Unknown";
+      performer = song.author || "YouTube";
+      link = song.link || song.url || "";
+      duration = song.duration || 0;
     } else if (song.source === "deezer") {
       audioUrl = song.preview || "";
       title = song.title || "Unknown";
@@ -266,6 +318,15 @@ async function handleUpdate(update) {
       duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
       isPreview = true;
       link = song.trackViewUrl || "";
+    }
+
+    if (song.source === "youtube" && link) {
+      await sendMessage(
+        chatId,
+        `🎬 ${title}\n👤 ${performer}\n🔗 ${link}`
+      );
+      sentCount++;
+      continue;
     }
 
     if (!audioUrl && !link) {
