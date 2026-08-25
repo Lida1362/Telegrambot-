@@ -1,16 +1,48 @@
 const BOT_TOKEN = "8691367292:AAG8sKYt1PnnWDLL7PRXfKVWBhze2yzWhyQ";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-async function searchMusic(query) {
+async function searchSaavn(query) {
   try {
     const url = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&page=1&limit=5`;
     const response = await fetch(url);
     const data = await response.json();
     return data.data?.results || [];
   } catch (e) {
-    console.error("Search error:", e);
+    console.error("Saavn search error:", e);
     return [];
   }
+}
+
+async function searchiTunes(query) {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=5&country=US`;
+    const response = await fetch(url);
+    const data = await response.json();
+    return data.results || [];
+  } catch (e) {
+    console.error("iTunes search error:", e);
+    return [];
+  }
+}
+
+async function searchMusic(query) {
+  const saavnResults = await searchSaavn(query);
+  if (saavnResults.length > 0) {
+    return saavnResults.map((song) => ({
+      ...song,
+      source: "saavn",
+    }));
+  }
+
+  const iTunesResults = await searchiTunes(query);
+  if (iTunesResults.length > 0) {
+    return iTunesResults.map((song) => ({
+      ...song,
+      source: "itunes",
+    }));
+  }
+
+  return [];
 }
 
 async function sendMessage(chatId, text) {
@@ -81,16 +113,27 @@ async function handleUpdate(update) {
   }
 
   const song = results[0];
-  const duration = song.duration ? Math.floor(song.duration / 1000) : 0;
-  const audioUrl = song.downloadUrl || song.url;
+  let audioUrl = "";
+  let title = "";
+  let performer = "";
+  let duration = 0;
+
+  if (song.source === "saavn") {
+    audioUrl = song.downloadUrl || song.url || song.mediaUrl || "";
+    title = song.name || song.title || "Unknown";
+    performer = song.primaryArtists || song.artists?.primary || "Unknown";
+    duration = song.duration ? Math.floor(song.duration / 1000) : 0;
+  } else if (song.source === "itunes") {
+    audioUrl = song.previewUrl || "";
+    title = song.trackName || "Unknown";
+    performer = song.artistName || "Unknown";
+    duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
+  }
 
   if (!audioUrl) {
     await sendMessage(chatId, "❌ لینک دانلود برای این آهنگ در دسترس نیست.");
     return;
   }
-
-  const title = song.name || song.title || "Unknown";
-  const performer = song.primaryArtists || song.artists?.primary || "Unknown";
 
   await sendAudio(chatId, audioUrl, title, performer, duration);
 }
