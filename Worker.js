@@ -86,58 +86,7 @@ async function searchiTunes(query) {
   }
 }
 
-async function searchYouTube(query) {
-  const instances = [
-    "https://vid.puffyan.us",
-    "https://inv.nadeko.net",
-    "https://invidious.lunar.icu",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.privacyredirect.com",
-    "https://yewtu.be",
-    "https://invidious.f5.si",
-    "https://iv.datura.network",
-    "https://invidious.perennialte.ch",
-  ];
-
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-  };
-
-  for (const instance of instances) {
-    try {
-      const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
-      const response = await fetch(url, { headers });
-
-      if (!response.ok) {
-        console.log(`YouTube instance ${instance} returned ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-      const videos = (data || []).filter((item) => item.type === "video");
-
-      if (videos.length > 0) {
-        console.log(`YouTube results from ${instance}:`, videos.length);
-        return videos.slice(0, 10).map((video) => ({
-          title: video.title || "",
-          source: "youtube",
-          url: video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : video.url || "",
-          link: video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : video.url || "",
-          duration: video.lengthSeconds || 0,
-          author: video.author || "",
-        }));
-      }
-    } catch (e) {
-      console.error(`YouTube instance ${instance} failed:`, e.message);
-      continue;
-    }
-  }
-
-  return [];
-}
-
+async function searchiTunes(query) {
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
   const mediaPreviewUrl = song.media_preview_url || "";
@@ -158,7 +107,7 @@ function scoreResult(song, query) {
   let score = 0;
 
   const title = (song.song || song.title || song.title_short || song.title || "").toLowerCase();
-  const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || song.author || "").toLowerCase();
+  const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || "").toLowerCase();
 
   if (title.includes(queryLower)) {
     score += 10;
@@ -175,10 +124,6 @@ function scoreResult(song, query) {
     score += 5;
   }
 
-  if (song.source === "youtube") {
-    score += 12;
-  }
-
   if (song.preview || song.downloadUrl || song.vlink || song.uri || song.url) {
     score += 10;
   }
@@ -192,7 +137,6 @@ async function searchAllSources(query) {
   const results = await Promise.allSettled([
     searchJioSaavn(query),
     searchDeezer(query),
-    searchYouTube(query),
     searchiTunes(query),
   ]);
 
@@ -270,7 +214,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\n/youtube [نام آهنگ] - جستجو در YouTube\n\nمنابع جستجو: JioSaavn, YouTube, Deezer, iTunes"
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, Deezer, iTunes\n\n/artists - نمایش لیست خوانندگان"
     );
     return;
   }
@@ -280,30 +224,6 @@ async function handleUpdate(update) {
       chatId,
       "🎤 لیست خوانندگان:\n\n" + ARTIST_LIST.join("\n")
     );
-    return;
-  }
-
-  if (text.startsWith("/youtube ")) {
-    const query = text.replace("/youtube ", "").trim();
-    if (!query) {
-      await sendMessage(chatId, "لطفا عبارت جستجو را بعد از /youtube وارد کنید.\nمثال: /youtube moein zendegi ba tou");
-      return;
-    }
-
-    await sendChatAction(chatId, "typing");
-    const results = await searchYouTube(query);
-
-    if (results.length === 0) {
-      await sendMessage(chatId, "❌ ویدیویی در YouTube یافت نشد.");
-      return;
-    }
-
-    for (const video of results.slice(0, 5)) {
-      await sendMessage(
-        chatId,
-        `🎬 ${video.title || "بدون عنوان"}\n👤 ${video.author || "YouTube"}\n⏱️ ${video.duration ? Math.floor(video.duration / 60) + ":" + String(video.duration % 60).padStart(2, "0") : ""}\n🔗 ${video.link || video.url || ""}`
-      );
-    }
     return;
   }
 
@@ -333,12 +253,6 @@ async function handleUpdate(update) {
       performer = song.primary_artists || song.singers || "Unknown";
       duration = parseInt(song.duration) || 0;
       link = song.perma_url || "";
-    } else if (song.source === "youtube") {
-      audioUrl = "";
-      title = song.title || "Unknown";
-      performer = song.author || "YouTube";
-      link = song.link || song.url || "";
-      duration = song.duration || 0;
     } else if (song.source === "deezer") {
       audioUrl = song.preview || "";
       title = song.title || "Unknown";
@@ -353,15 +267,6 @@ async function handleUpdate(update) {
       duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
       isPreview = true;
       link = song.trackViewUrl || "";
-    }
-
-    if (song.source === "youtube" && link) {
-      await sendMessage(
-        chatId,
-        `🎬 ${title}\n👤 ${performer}\n🔗 ${link}`
-      );
-      sentCount++;
-      continue;
     }
 
     if (!audioUrl && !link) {
