@@ -87,25 +87,39 @@ async function searchiTunes(query) {
 }
 
 async function searchYouTube(query) {
-  try {
-    const instances = [
-      "https://vid.puffyan.us",
-      "https://inv.nadeko.net",
-      "https://invidious.lunar.icu",
-    ];
+  const instances = [
+    "https://vid.puffyan.us",
+    "https://inv.nadeko.net",
+    "https://invidious.lunar.icu",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.privacyredirect.com",
+    "https://yewtu.be",
+    "https://invidious.f5.si",
+    "https://iv.datura.network",
+    "https://invidious.perennialte.ch",
+  ];
 
-    for (const instance of instances) {
-      try {
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          continue;
-        }
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
 
-        const data = await response.json();
-        const videos = (data || []).filter((item) => item.type === "video");
-        
+  for (const instance of instances) {
+    try {
+      const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`;
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        console.log(`YouTube instance ${instance} returned ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const videos = (data || []).filter((item) => item.type === "video");
+
+      if (videos.length > 0) {
+        console.log(`YouTube results from ${instance}:`, videos.length);
         return videos.slice(0, 10).map((video) => ({
           title: video.title || "",
           source: "youtube",
@@ -114,17 +128,14 @@ async function searchYouTube(query) {
           duration: video.lengthSeconds || 0,
           author: video.author || "",
         }));
-      } catch (e) {
-        console.error(`YouTube instance ${instance} failed:`, e);
-        continue;
       }
+    } catch (e) {
+      console.error(`YouTube instance ${instance} failed:`, e.message);
+      continue;
     }
-
-    return [];
-  } catch (e) {
-    console.error("YouTube search error:", e);
-    return [];
   }
+
+  return [];
 }
 
 function extractSaavnAudio(song) {
@@ -177,7 +188,7 @@ function scoreResult(song, query) {
 
 async function searchAllSources(query) {
   console.log("Searching all sources for:", query);
-  
+
   const results = await Promise.allSettled([
     searchJioSaavn(query),
     searchDeezer(query),
