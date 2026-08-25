@@ -46,7 +46,10 @@ async function searchJioSaavn(query) {
     const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&ctx=android&q=${encodeURIComponent(query)}&p=1&n=10`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.results || [];
+    return (data.results || []).map((song) => ({
+      ...song,
+      source: "saavn",
+    }));
   } catch (e) {
     console.error("JioSaavn search error:", e);
     return [];
@@ -55,10 +58,13 @@ async function searchJioSaavn(query) {
 
 async function searchDeezer(query) {
   try {
-    const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=5`;
+    const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=10`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.data || [];
+    return (data.data || []).map((song) => ({
+      ...song,
+      source: "deezer",
+    }));
   } catch (e) {
     console.error("Deezer search error:", e);
     return [];
@@ -67,12 +73,30 @@ async function searchDeezer(query) {
 
 async function searchiTunes(query) {
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=5&country=US`;
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=10&country=US`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.results || [];
+    return (data.results || []).map((song) => ({
+      ...song,
+      source: "itunes",
+    }));
   } catch (e) {
     console.error("iTunes search error:", e);
+    return [];
+  }
+}
+
+async function searchSoundCloud(query) {
+  try {
+    const url = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&limit=10&client_id=2t9loNQH90kzJcsFCODdigxfp325aq4z&app_version=1744210159`;
+    const response = await fetch(url);
+    const data = await response.json();
+    return (data.collection || []).map((song) => ({
+      ...song,
+      source: "soundcloud",
+    }));
+  } catch (e) {
+    console.error("SoundCloud search error:", e);
     return [];
   }
 }
@@ -96,7 +120,7 @@ async function searchAparat(query) {
     const videoRegex = /href="\/video\/[^"]+"[^>]*>([^<]*)<\/a>/g;
     let match;
     
-    while ((match = videoRegex.exec(html)) !== null && results.length < 5) {
+    while ((match = videoRegex.exec(html)) !== null && results.length < 10) {
       const title = match[1]?.trim();
       if (title && title.length > 3) {
         results.push({
@@ -114,23 +138,9 @@ async function searchAparat(query) {
   }
 }
 
-async function searchSoundCloud(query) {
-  try {
-    const url = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&limit=5&client_id=2t9loNQH90kzJcsFCODdigxfp325aq4z&app_version=1744210159`;
-    const response = await fetch(url);
-    const data = await response.json();
-    return data.collection || [];
-  } catch (e) {
-    console.error("SoundCloud search error:", e);
-    return [];
-  }
-}
-
 function extractSaavnAudio(song) {
   const vlink = song.vlink || "";
   const mediaPreviewUrl = song.media_preview_url || "";
-  const encryptedMediaUrl = song.encrypted_media_url || "";
-  const permaUrl = song.perma_url || "";
 
   if (vlink && vlink.includes(".mp3")) {
     return vlink;
@@ -140,81 +150,63 @@ function extractSaavnAudio(song) {
     return mediaPreviewUrl;
   }
 
-  if (encryptedMediaUrl) {
-    return null;
-  }
-
   return null;
 }
 
-async function searchMusic(query) {
-  const queries = [query];
+function scoreResult(song, query) {
+  const queryLower = query.toLowerCase();
+  let score = 0;
 
-  for (const artist of ARTIST_LIST) {
-    if (query.toLowerCase().includes(artist.toLowerCase())) {
-      queries.push(`${artist} ${query}`);
-      queries.push(`${query} ${artist}`);
+  const title = (song.song || song.title || "").toLowerCase();
+  const artist = (song.primary_artists || song.singers || song.artist?.name || song.user?.username || "").toLowerCase();
+
+  if (title.includes(queryLower)) {
+    score += 10;
+    if (title === queryLower) {
+      score += 20;
     }
   }
 
-  const uniqueQueries = [...new Set(queries)];
-
-  for (const q of uniqueQueries) {
-    const saavnResults = await searchJioSaavn(q);
-    if (saavnResults.length > 0) {
-      return saavnResults.map((song) => ({
-        ...song,
-        source: "saavn",
-        matchedQuery: q,
-      }));
-    }
+  if (artist.includes(queryLower)) {
+    score += 8;
   }
 
-  for (const q of uniqueQueries) {
-    const soundcloudResults = await searchSoundCloud(q);
-    if (soundcloudResults.length > 0) {
-      return soundcloudResults.map((song) => ({
-        ...song,
-        source: "soundcloud",
-        matchedQuery: q,
-      }));
-    }
+  if (song.source === "saavn") {
+    score += 5;
   }
 
-  for (const q of uniqueQueries) {
-    const deezerResults = await searchDeezer(q);
-    if (deezerResults.length > 0) {
-      return deezerResults.map((song) => ({
-        ...song,
-        source: "deezer",
-        matchedQuery: q,
-      }));
-    }
+  if (song.preview || song.downloadUrl || song.vlink) {
+    score += 10;
   }
 
-  for (const q of uniqueQueries) {
-    const aparatResults = await searchAparat(q);
-    if (aparatResults.length > 0) {
-      return aparatResults.map((song) => ({
-        ...song,
-        source: "aparat",
-        matchedQuery: q,
-      }));
-    }
-  }
+  return score;
+}
 
-  for (const q of uniqueQueries) {
-    const iTunesResults = await searchiTunes(q);
-    if (iTunesResults.length > 0) {
-      return iTunesResults.map((song) => ({
-        ...song,
-        source: "itunes",
-        matchedQuery: q,
-      }));
-    }
-  }
+async function searchAllSources(query) {
+  const [saavnResults, soundcloudResults, deezerResults, aparatResults, iTunesResults] = await Promise.all([
+    searchJioSaavn(query),
+    searchSoundCloud(query),
+    searchDeezer(query),
+    searchAparat(query),
+    searchiTunes(query),
+  ]);
 
-  return [];
+  const allResults = [
+    ...saavnResults,
+    ...soundcloudResults,
+    ...deezerResults,
+    ...aparatResults,
+    ...iTunesResults,
+  ];
+
+  const scored = allResults.map((song) => ({
+    ...song,
+    score: scoreResult(song, query),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored;
 }
 
 async function sendMessage(chatId, text) {
@@ -285,7 +277,7 @@ async function handleUpdate(update) {
 
   await sendChatAction(chatId, "upload_audio");
 
-  const results = await searchMusic(text);
+  const results = await searchAllSources(text);
 
   if (results.length === 0) {
     await sendMessage(chatId, "❌ آهنگ یافت نشد. لطفا عبارت دیگری را امتحان کنید.");
