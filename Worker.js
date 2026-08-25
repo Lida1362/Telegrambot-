@@ -3,10 +3,10 @@ const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 async function searchMusic(query) {
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=5&country=US`;
+    const url = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&page=1&limit=5`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.results || [];
+    return data.data?.results || [];
   } catch (e) {
     console.error("Search error:", e);
     return [];
@@ -64,12 +64,12 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن歌词 را ارسال کنید تا فایل صوتی را برایتان بفرستم."
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ کامل را برایتان بفرستم."
     );
     return;
   }
 
-  await sendChatAction(chatId, "typing");
+  await sendChatAction(chatId, "upload_audio");
 
   const results = await searchMusic(text);
 
@@ -79,9 +79,18 @@ async function handleUpdate(update) {
   }
 
   const song = results[0];
-  const duration = song.trackTimeMillis ? Math.floor(song.trackTimeMillis / 1000) : 0;
+  const duration = song.duration ? Math.floor(song.duration / 1000) : 0;
+  const audioUrl = song.downloadUrl || song.url;
 
-  await sendAudio(chatId, song.previewUrl, song.trackName, song.artistName, duration);
+  if (!audioUrl) {
+    await sendMessage(chatId, "❌ لینک دانلود برای این آهنگ در دسترس نیست.");
+    return;
+  }
+
+  const title = song.name || song.title || "Unknown";
+  const performer = song.primaryArtists || song.artists?.primary || "Unknown";
+
+  await sendAudio(chatId, audioUrl, title, performer, duration);
 }
 
 export default {
