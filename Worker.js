@@ -1,14 +1,26 @@
 const BOT_TOKEN = "8691367292:AAG8sKYt1PnnWDLL7PRXfKVWBhze2yzWhyQ";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-async function searchSaavn(query) {
+async function searchJioSaavn(query) {
   try {
-    const url = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&page=1&limit=5`;
+    const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&ctx=android&q=${encodeURIComponent(query)}&p=1&n=10`;
     const response = await fetch(url);
     const data = await response.json();
-    return data.data?.results || [];
+    return data.results || [];
   } catch (e) {
-    console.error("Saavn search error:", e);
+    console.error("JioSaavn search error:", e);
+    return [];
+  }
+}
+
+async function searchDeezer(query) {
+  try {
+    const url = `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=5`;
+    const response = await fetch(url);
+    const data = await response.json();
+    return data.data || [];
+  } catch (e) {
+    console.error("Deezer search error:", e);
     return [];
   }
 }
@@ -26,11 +38,19 @@ async function searchiTunes(query) {
 }
 
 async function searchMusic(query) {
-  const saavnResults = await searchSaavn(query);
+  const saavnResults = await searchJioSaavn(query);
   if (saavnResults.length > 0) {
     return saavnResults.map((song) => ({
       ...song,
       source: "saavn",
+    }));
+  }
+
+  const deezerResults = await searchDeezer(query);
+  if (deezerResults.length > 0) {
+    return deezerResults.map((song) => ({
+      ...song,
+      source: "deezer",
     }));
   }
 
@@ -87,6 +107,27 @@ async function sendChatAction(chatId, action = "typing") {
   }
 }
 
+function extractSaavnAudio(song) {
+  const vlink = song.vlink || "";
+  const mediaPreviewUrl = song.media_preview_url || "";
+  const encryptedMediaUrl = song.encrypted_media_url || "";
+  const permaUrl = song.perma_url || "";
+
+  if (vlink && vlink.includes(".mp3")) {
+    return vlink;
+  }
+
+  if (mediaPreviewUrl && mediaPreviewUrl.includes(".mp4")) {
+    return mediaPreviewUrl;
+  }
+
+  if (encryptedMediaUrl) {
+    return null;
+  }
+
+  return null;
+}
+
 async function handleUpdate(update) {
   if (!update.message || !update.message.text) return;
 
@@ -98,7 +139,7 @@ async function handleUpdate(update) {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ کامل را برایتان بفرستم."
+      "🎵 به ربات جستجوگر موسیقی خوش آمدید!\n\nنام آهنگ، خواننده یا حتی متن شعر را ارسال کنید تا آهنگ را برایتان بفرستم.\n\nمنابع جستجو: JioSaavn, Deezer, iTunes"
     );
     return;
   }
@@ -119,10 +160,15 @@ async function handleUpdate(update) {
   let duration = 0;
 
   if (song.source === "saavn") {
-    audioUrl = song.downloadUrl || song.url || song.mediaUrl || "";
-    title = song.name || song.title || "Unknown";
-    performer = song.primaryArtists || song.artists?.primary || "Unknown";
-    duration = song.duration ? Math.floor(song.duration / 1000) : 0;
+    audioUrl = extractSaavnAudio(song);
+    title = song.song || song.title || "Unknown";
+    performer = song.primary_artists || song.singers || "Unknown";
+    duration = parseInt(song.duration) || 0;
+  } else if (song.source === "deezer") {
+    audioUrl = song.preview || "";
+    title = song.title || "Unknown";
+    performer = song.artist?.name || "Unknown";
+    duration = song.duration || 0;
   } else if (song.source === "itunes") {
     audioUrl = song.previewUrl || "";
     title = song.trackName || "Unknown";
@@ -131,7 +177,10 @@ async function handleUpdate(update) {
   }
 
   if (!audioUrl) {
-    await sendMessage(chatId, "❌ لینک دانلود برای این آهنگ در دسترس نیست.");
+    await sendMessage(
+      chatId,
+      `🎵 آهنگ پیدا شد: ${title} - ${performer}\n\n⚠️ لینک پخش مستقیم در دسترس نیست.\n🔗 لینک: ${song.perma_url || song.link || ""}`
+    );
     return;
   }
 
