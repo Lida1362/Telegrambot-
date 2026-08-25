@@ -1,4 +1,4 @@
-const BOT_TOKEN = "8090000369:AAHB2kRaqIfuGar9YvtK61sji8oz7mx-r50";
+const BOT_TOKEN = "8691367292:AAG8sKYt1PnnWDLL7PRXfKVWBhze2yzWhyQ";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 async function searchMusic(query) {
@@ -61,6 +61,8 @@ async function handleUpdate(update) {
   const chatId = update.message.chat.id;
   const text = update.message.text.trim();
 
+  console.log("Received message:", text, "from chat:", chatId);
+
   if (text === "/start") {
     await sendMessage(
       chatId,
@@ -100,6 +102,7 @@ export default {
     if (request.method === "POST") {
       try {
         const update = await request.json();
+        console.log("Received update:", JSON.stringify(update).substring(0, 200));
 
         if (update.message || update.edited_message) {
           ctx.waitUntil(handleUpdate(update));
@@ -124,10 +127,17 @@ export default {
 
     if (url.pathname === "/setup" && request.method === "GET") {
       const webhookUrl = `${url.origin}/webhook`;
+      console.log("Setting webhook to:", webhookUrl);
       const response = await fetch(
         `${TELEGRAM_API}/setWebhook?url=${encodeURIComponent(webhookUrl)}`
       );
-      return new Response(await response.text());
+      const result = await response.json();
+      console.log("Webhook result:", result);
+      return new Response(JSON.stringify(result, null, 2));
+    }
+
+    if (url.pathname === "/webhook" && request.method === "GET") {
+      return new Response("Webhook endpoint is ready");
     }
 
     return new Response("Music Bot Worker is running");
